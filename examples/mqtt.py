@@ -5,6 +5,7 @@ from gpiozero import CPUTemperature
 import socket
 import paho.mqtt.client as mqtt
 import json
+import subprocess
 
 # Variables
 
@@ -23,7 +24,7 @@ wind_spd_topic = "sensors/weather/wind_speed"
 rain_topic = "sensors/weather/rain"
 rain_total_topic = "sensors/weather/rain_total"
 
-mqtt_server = "10.0.0.240"  # Replace with the IP or URI of the MQTT server you use
+mqtt_server = "10.0.0.65"  # Replace with the IP or URI of the MQTT server you use
 client_id = "weatherhat"
 
 
@@ -62,6 +63,19 @@ def send_payload(topic, data):
     client.publish(topic=topic, payload=payload, qos=0, retain=False)
 #    print(f"sending {payload} to server")
 
+def restart_wifi():
+    subprocess.call(['sudo', 'ifconfig', 'wlan0', 'down'])
+    sleep(5)
+    subprocess.call(['sudo', 'ifconfig', 'wlan0', 'up'])
+
+def check_connectivity():
+    try:
+        # Ping local router
+        subprocess.check_call(['ping', '-c', '1', 'dradis.timfinn.dev], 
+                            stdout=subprocess.DEVNULL)
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
 #   Main Loop
 

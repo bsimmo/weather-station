@@ -132,6 +132,17 @@ install_python_packages() {
         
         # Install weatherhat from local fork
         if [ -d "$HOME/weatherhat-python" ]; then
+
+            # Fix missing CHANGELOG.md issue with hatch build system
+            cd "$HOME/weatherhat-python"
+            if [ ! -f "CHANGELOG.md" ]; then
+                info "Creating dummy CHANGELOG.md to satisfy build requirements..."
+                echo "# Changelog" > CHANGELOG.md
+                echo "" >> CHANGELOG.md
+                echo "## Local fork" >> CHANGELOG.md
+                echo "Modified for local MQTT publishing." >> CHANGELOG.md
+            fi
+
             info "Installing weatherhat from local repository..."
             pip install -e "$HOME/weatherhat-python"
         else

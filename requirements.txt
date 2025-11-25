@@ -1,0 +1,17 @@
+colorzero==2.0
+gpiod==2.4.0
+gpiodevice==0.0.5
+gpiozero==2.0.1
+i2cdevice==1.0.0
+ltr559==1.0.0
+numpy==1.26.4
+paho-mqtt==2.1.0
+pimoroni-bme280==1.0.0
+pimoroni-ioexpander==1.0.1
+RPi.GPIO==0.7.1
+setuptools==80.9.0
+smbus2==0.5.0
+spidev==3.8
+st7789==1.0.1
+toml==0.10.2
+weatherhat==1.0.0

@@ -1,37 +1,47 @@
 #!/bin/bash
 # install-dependencies.sh
-# Weather HAT dependency installer for Raspberry Pi Zero WH (ARMv6)
-# Handles architecture limitations by preferring system packages
+# Weather HAT dependency installer
+# Supports Pi Zero 2 W (aarch64) and Pi Zero WH (armv6l)
 
 set -e
 
 echo "=========================================="
 echo "Weather HAT Dependency Installer"
-echo "Optimized for Pi Zero WH (ARMv6)"
 echo "=========================================="
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Check if running on Pi Zero
+# Check architecture
 check_architecture() {
     ARCH=$(uname -m)
     info "Detected architecture: $ARCH"
     
-    if [ "$ARCH" = "armv6l" ]; then
-        info "Pi Zero (ARMv6) detected - using compatible installation method"
-        IS_ARMV6=true
-    else
-        info "Non-ARMv6 architecture - standard installation will be used"
-        IS_ARMV6=false
-    fi
+    case "$ARCH" in
+        aarch64)
+            info "64-bit detected - full package compatibility"
+            IS_64BIT=true
+            ;;
+        armv7l)
+            info "ARMv7 (32-bit) detected - good package compatibility"
+            IS_64BIT=false
+            ;;
+        armv6l)
+            warn "Pi Zero (ARMv6) detected - using compatible installation method"
+            IS_64BIT=false
+            ;;
+        *)
+            warn "Unknown architecture: $ARCH"
+            IS_64BIT=false
+            ;;
+    esac
 }
 
 # Update system packages
@@ -40,11 +50,11 @@ update_system() {
     sudo apt-get update
 }
 
-# Install system-level dependencies (avoids pip compilation issues on ARMv6)
+# Install system-level dependencies
 install_system_packages() {
     info "Installing system packages..."
     
-    # Core Python packages - using system versions avoids ARMv6 compilation failures
+    # Core Python packages
     sudo apt-get install -y \
         python3-pip \
         python3-venv \
@@ -60,13 +70,19 @@ install_system_packages() {
     # I2C and SPI tools
     sudo apt-get install -y \
         i2c-tools \
-        python3-lgpio \
+        python3-lgpio
     
-    # Install correct libgpiod version (2 for older Bookworm, 3 for newer)
+    # Handle libgpiod version differences (libgpiod2 vs libgpiod3)
+    info "Detecting libgpiod version..."
     if apt-cache show libgpiod3 &>/dev/null; then
+        info "Installing libgpiod3 (newer Bookworm)"
         sudo apt-get install -y libgpiod3 python3-libgpiod
-    else
+    elif apt-cache show libgpiod2 &>/dev/null; then
+        info "Installing libgpiod2 (older Bookworm)"
         sudo apt-get install -y libgpiod2 python3-libgpiod
+    else
+        warn "No libgpiod package found - installing python3-libgpiod only"
+        sudo apt-get install -y python3-libgpiod || warn "python3-libgpiod not available"
     fi
     
     # Optional: fonts for display
@@ -75,31 +91,49 @@ install_system_packages() {
 
 # Enable required interfaces
 enable_interfaces() {
-    info "Enabling I2C and SPI interfaces..."
+    info "Checking I2C and SPI interfaces..."
     
-    # Enable I2C
-    if ! grep -q "^dtparam=i2c_arm=on" /boot/config.txt 2>/dev/null && \
-       ! grep -q "^dtparam=i2c_arm=on" /boot/firmware/config.txt 2>/dev/null; then
-        warn "I2C may not be enabled. Run: sudo raspi-config"
+    # Check for config in either location (Pi 4/5 vs older)
+    CONFIG_FILE=""
+    if [ -f /boot/firmware/config.txt ]; then
+        CONFIG_FILE="/boot/firmware/config.txt"
+    elif [ -f /boot/config.txt ]; then
+        CONFIG_FILE="/boot/config.txt"
     fi
     
-    # Enable SPI
-    if ! grep -q "^dtparam=spi=on" /boot/config.txt 2>/dev/null && \
-       ! grep -q "^dtparam=spi=on" /boot/firmware/config.txt 2>/dev/null; then
-        warn "SPI may not be enabled. Run: sudo raspi-config"
+    if [ -n "$CONFIG_FILE" ]; then
+        if ! grep -q "^dtparam=i2c_arm=on" "$CONFIG_FILE"; then
+            warn "I2C may not be enabled. Run: sudo raspi-config"
+        else
+            info "I2C is enabled"
+        fi
+        
+        if ! grep -q "^dtparam=spi=on" "$CONFIG_FILE"; then
+            warn "SPI may not be enabled. Run: sudo raspi-config"
+        else
+            info "SPI is enabled"
+        fi
+    else
+        warn "Could not find config.txt - verify I2C/SPI manually"
     fi
-    
-    # Add user to required groups
-    sudo usermod -aG i2c,spi,gpio $USER 2>/dev/null || true
 }
 
-# Create virtual environment with system packages access
+# Setup Python virtual environment
 setup_virtualenv() {
     VENV_PATH="$HOME/.virtualenvs/pimoroni"
     
     info "Setting up virtual environment at $VENV_PATH..."
     
-    # Create venv with access to system packages (critical for ARMv6)
+    # Create virtualenvs directory if needed
+    mkdir -p "$HOME/.virtualenvs"
+    
+    # Remove broken venv if it exists
+    if [ -d "$VENV_PATH" ] && [ ! -f "$VENV_PATH/bin/python" ]; then
+        warn "Removing broken virtualenv..."
+        rm -rf "$VENV_PATH"
+    fi
+    
+    # Create venv with system site packages (gives us pre-built packages)
     if [ ! -d "$VENV_PATH" ]; then
         python3 -m venv --system-site-packages "$VENV_PATH"
         info "Virtual environment created"
@@ -107,108 +141,84 @@ setup_virtualenv() {
         info "Virtual environment already exists"
     fi
     
-    # Activate venv
+    # Activate and upgrade pip
     source "$VENV_PATH/bin/activate"
-    
-    # Upgrade pip within venv
-    pip install --upgrade pip wheel setuptools
+    pip install --upgrade pip wheel
 }
 
-# Install Python packages in virtual environment
+# Install Python packages
 install_python_packages() {
-    VENV_PATH="$HOME/.virtualenvs/pimoroni"
-    source "$VENV_PATH/bin/activate"
+    info "Installing Python packages in virtualenv..."
     
-    info "Installing Python packages in virtual environment..."
+    source "$HOME/.virtualenvs/pimoroni/bin/activate"
     
-    if [ "$IS_ARMV6" = true ]; then
-        # ARMv6: Install only packages that have wheels or are pure Python
-        # System packages provide: smbus, gpiozero, paho-mqtt, numpy, PIL
+    # Install/upgrade packages that work well from pip
+    pip install --upgrade \
+        smbus2 \
+        fonts \
+        font-roboto \
+        st7789
+    
+    # Install weatherhat from local repo if present
+    if [ -d "$HOME/weatherhat-python" ]; then
+        info "Installing weatherhat from local repository..."
         
-        # Pimoroni packages - pure Python, should work
-        pip install --upgrade \
-            fonts \
-            font-dejavu \
-            st7789 \
-            pimoroni-bme280 \
-            ltr559 \
-            ads1015 \
-            || warn "Some Pimoroni packages may have failed"
-        
-        # Install weatherhat from local fork
-        if [ -d "$HOME/weatherhat-python" ]; then
+        # Create CHANGELOG.md if missing (required by build system)
+        if [ ! -f "$HOME/weatherhat-python/CHANGELOG.md" ]; then
+            cat > "$HOME/weatherhat-python/CHANGELOG.md" << 'EOF'
+# Changelog
 
-            # Fix missing CHANGELOG.md issue with hatch build system
-            cd "$HOME/weatherhat-python"
-            if [ ! -f "CHANGELOG.md" ]; then
-                info "Creating dummy CHANGELOG.md to satisfy build requirements..."
-                echo "# Changelog" > CHANGELOG.md
-                echo "" >> CHANGELOG.md
-                echo "## Local fork" >> CHANGELOG.md
-                echo "Modified for local MQTT publishing." >> CHANGELOG.md
-            fi
-
-            info "Installing weatherhat from local repository..."
-            pip install -e "$HOME/weatherhat-python"
-        else
-            warn "weatherhat-python not found at $HOME/weatherhat-python"
-            warn "Clone your fork: git clone https://github.com/timFinn/weatherhat-python.git"
+## Local fork
+Modified for local MQTT publishing to Mosquitto broker.
+EOF
+            info "Created missing CHANGELOG.md"
         fi
+        
+        pip install -e "$HOME/weatherhat-python"
     else
-        # Non-ARMv6: Standard installation
-        pip install --upgrade \
-            paho-mqtt \
-            gpiozero \
-            RPi.GPIO \
-            smbus \
-            fonts \
-            font-dejavu \
-            st7789 \
-            pimoroni-bme280 \
-            ltr559 \
-            ads1015
-        
-        if [ -d "$HOME/weatherhat-python" ]; then
-            pip install -e "$HOME/weatherhat-python"
-        fi
+        warn "weatherhat-python not found at ~/weatherhat-python"
+        warn "Clone it first: git clone https://github.com/pimoroni/weatherhat-python"
     fi
 }
 
 # Verify installation
 verify_installation() {
-    VENV_PATH="$HOME/.virtualenvs/pimoroni"
-    source "$VENV_PATH/bin/activate"
-    
     info "Verifying installation..."
     
-    echo ""
-    echo "Testing imports..."
+    source "$HOME/.virtualenvs/pimoroni/bin/activate"
     
-    python3 << 'EOF'
-import sys
-errors = []
-
-modules = [
-    ('paho.mqtt.client', 'paho-mqtt'),
-    ('smbus', 'smbus/smbus2'),
-    ('gpiozero', 'gpiozero'),
-    ('weatherhat', 'weatherhat'),
-]
-
-for module, name in modules:
-    try:
-        __import__(module)
-        print(f"  ✓ {name}")
-    except ImportError as e:
-        print(f"  ✗ {name}: {e}")
-        errors.append(name)
-
-if errors:
-    print(f"\nSome modules failed to import: {errors}")
-    sys.exit(1)
-else:
-    print("\nAll core modules imported successfully!")
-EOF
+    echo ""
+    echo "Python path: $(which python)"
+    echo "Python version: $(python --version)"
+    echo ""
+    
+    # Test critical imports
+    FAILED=false
+    
+    for module in smbus2 gpiozero paho.mqtt.client PIL numpy; do
+        if python -c "import $module" 2>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} $module"
+        else
+            echo -e "  ${RED}✗${NC} $module"
+            FAILED=true
+        fi
+    done
+    
+    # Test weatherhat separately (may not be installed yet)
+    if python -c "import weatherhat" 2>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} weatherhat"
+    else
+        echo -e "  ${YELLOW}?${NC} weatherhat (install from ~/weatherhat-python)"
+    fi
+    
+    echo ""
+    
+    if [ "$FAILED" = true ]; then
+        error "Some packages failed to import - check errors above"
+        return 1
+    else
+        info "All critical packages verified!"
+    fi
 }
 
 # Test hardware connectivity
@@ -259,7 +269,9 @@ main() {
     echo ""
     echo "Next steps:"
     echo "  1. Reboot if this is a fresh install: sudo reboot"
-    echo "  2. Test manually: source ~/.virtualenvs/pimoroni/bin/activate && python mqtt.py"
+    echo "  2. Test manually:"
+    echo "     source ~/.virtualenvs/pimoroni/bin/activate"
+    echo "     python ~/weatherhat-python/examples/mqtt.py"
     echo "  3. Install systemd service: sudo ./install-service.sh"
     echo ""
 }

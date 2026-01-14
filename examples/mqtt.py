@@ -119,8 +119,8 @@ def send_payload(client, topic, data):
         bool: True if publish succeeded, False otherwise
     """
     try:
-        # Simple value format - easier for most MQTT consumers
-        payload = json.dumps({"value": data, "timestamp": time()})
+        # Use original format for Telegraf compatibility: {topic: value}
+        payload = json.dumps({topic: data})
         result = client.publish(topic=topic, payload=payload, qos=1, retain=False)
 
         if result.rc != mqtt.MQTT_ERR_SUCCESS:

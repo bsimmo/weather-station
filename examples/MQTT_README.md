@@ -27,6 +27,7 @@ This is an improved, production-ready version of the MQTT weather station publis
 
 1. Copy the example environment file:
 ```bash
+cd ~/weatherhat-python/examples
 cp mqtt.env.example mqtt.env
 ```
 
@@ -35,9 +36,24 @@ cp mqtt.env.example mqtt.env
 nano mqtt.env
 ```
 
-3. Run with environment variables:
+3. Run with environment variables (choose one method):
+
+**Method 1: Using the helper script (easiest)**
 ```bash
-export $(cat mqtt.env | xargs) && python3 mqtt.py
+./run-mqtt.sh
+```
+
+**Method 2: Using source (recommended for manual runs)**
+```bash
+set -a
+source mqtt.env
+set +a
+python3 mqtt.py
+```
+
+**Method 3: One-liner (for testing)**
+```bash
+env $(grep -v '^#' mqtt.env | xargs) python3 mqtt.py
 ```
 
 ### Using a systemd Service

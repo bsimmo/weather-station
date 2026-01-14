@@ -1,8 +1,6 @@
 [Unit]
-Description=Weather HAT MQTT Publisher
-Documentation=https://github.com/timFinn/weatherhat-python
-
-# Wait for network and time sync - critical for remote stations
+Description=Weather HAT MQTT Publisher (Improved)
+Documentation=https://github.com/pimoroni/weatherhat-python
 After=network-online.target time-sync.target
 Wants=network-online.target time-sync.target
 
@@ -17,6 +15,10 @@ Group=garden
 # Working directory
 WorkingDirectory=/home/garden/weatherhat-python/examples
 
+# Load environment configuration from file
+# Create this file from mqtt.env.example
+EnvironmentFile=/home/garden/weatherhat-python/examples/mqtt.env
+
 # Environment setup - use virtual environment's Python directly
 Environment="PATH=/home/garden/.virtualenvs/pimoroni/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="VIRTUAL_ENV=/home/garden/.virtualenvs/pimoroni"
@@ -24,26 +26,30 @@ Environment="VIRTUAL_ENV=/home/garden/.virtualenvs/pimoroni"
 # Give hardware time to initialize after boot
 ExecStartPre=/bin/sleep 15
 
-# Run the MQTT publisher script
+# Run the improved MQTT publisher script with structured logging
 ExecStart=/home/garden/.virtualenvs/pimoroni/bin/python /home/garden/weatherhat-python/examples/mqtt.py
 
 # Restart configuration - robust for remote deployment
+# With improved reconnection logic, failures should be rarer
 Restart=on-failure
 RestartSec=30
 StartLimitBurst=5
 StartLimitIntervalSec=300
 
-# Watchdog - restart if script hangs (optional, requires code support)
-# WatchdogSec=120
-
-# Resource limits appropriate for Pi Zero
+# Resource limits - improved version uses less CPU
 MemoryMax=128M
-CPUQuota=50%
+CPUQuota=25%
 
-# Logging
+# Logging - structured logs work well with journald
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=weatherhat
+
+# Security hardening (optional)
+# ProtectSystem=strict
+# ProtectHome=read-only
+# NoNewPrivileges=yes
+# PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target

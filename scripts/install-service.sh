@@ -49,6 +49,10 @@ echo ""
 setup_environment() {
     info "Checking environment configuration..."
 
+    # Detect the service user for proper ownership
+    SERVICE_USER=$(grep "^User=" "$SOURCE_SERVICE" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+    SERVICE_USER=${SERVICE_USER:-weather}
+
     if [ ! -f "$ENV_FILE" ]; then
         warn "Environment file not found: $ENV_FILE"
 
@@ -61,7 +65,8 @@ setup_environment() {
             if [[ ! $REPLY =~ ^[Nn]$ ]]; then
                 cp "$ENV_EXAMPLE" "$ENV_FILE"
                 chmod 600 "$ENV_FILE"
-                info "Created $ENV_FILE from template"
+                chown "$SERVICE_USER:$SERVICE_USER" "$ENV_FILE"
+                info "Created $ENV_FILE from template (owned by $SERVICE_USER)"
                 echo ""
                 warn "⚠️  IMPORTANT: You must edit $ENV_FILE before starting the service!"
                 echo ""
@@ -98,9 +103,10 @@ setup_environment() {
         fi
     fi
 
-    # Ensure proper permissions
+    # Ensure proper permissions and ownership
     chmod 600 "$ENV_FILE"
-    info "Environment file permissions set to 600 (secure)"
+    chown "$SERVICE_USER:$SERVICE_USER" "$ENV_FILE"
+    info "Environment file permissions set to 600, owned by $SERVICE_USER"
 }
 
 # Remove old cron job if it exists

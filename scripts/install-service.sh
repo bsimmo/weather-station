@@ -1,18 +1,17 @@
 #!/bin/bash
 # install-service.sh
-# Installs the Weather HAT systemd service with environment configuration
+# Installs the Weather HAT systemd service with full user and environment setup
 
 set -e
 
 SERVICE_NAME="weatherhat"
+SERVICE_USER="weather"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SOURCE_SERVICE="$PROJECT_ROOT/weatherhat.service"
-CONFIG_DIR="$PROJECT_ROOT/config"
-BIN_DIR="$PROJECT_ROOT/bin"
-ENV_EXAMPLE="$CONFIG_DIR/mqtt.env.example"
-ENV_FILE="$CONFIG_DIR/mqtt.env"
+SOURCE_PROJECT="$(dirname "$SCRIPT_DIR")"
+TARGET_PROJECT="/home/$SERVICE_USER/weather-station"
+SOURCE_SERVICE="$SOURCE_PROJECT/weatherhat.service"
+VENV_PATH="/home/$SERVICE_USER/.virtualenvs/pimoroni"
 
 # Colors
 RED='\033[0;31m'
@@ -39,36 +38,111 @@ if [ ! -f "$SOURCE_SERVICE" ]; then
 fi
 
 echo "=========================================="
-echo "Weather HAT Service Installer (Improved)"
+echo "Weather HAT Service Installer"
 echo "=========================================="
 echo ""
-info "Project root: $PROJECT_ROOT"
+info "Source project: $SOURCE_PROJECT"
+info "Target project: $TARGET_PROJECT"
+info "Service user: $SERVICE_USER"
 echo ""
+
+# Create service user if needed
+setup_user() {
+    info "Checking service user..."
+
+    if id "$SERVICE_USER" &>/dev/null; then
+        info "User '$SERVICE_USER' already exists"
+    else
+        info "Creating user '$SERVICE_USER'..."
+        useradd --create-home --shell /bin/bash "$SERVICE_USER"
+        info "User '$SERVICE_USER' created"
+    fi
+
+    # Add user to required hardware groups
+    local groups_to_add=""
+    for group in i2c gpio spi; do
+        if getent group "$group" &>/dev/null; then
+            if ! id -nG "$SERVICE_USER" | grep -qw "$group"; then
+                groups_to_add="$groups_to_add,$group"
+            fi
+        else
+            warn "Group '$group' does not exist - may need to enable interface"
+        fi
+    done
+
+    if [ -n "$groups_to_add" ]; then
+        groups_to_add="${groups_to_add:1}"  # Remove leading comma
+        info "Adding '$SERVICE_USER' to groups: $groups_to_add"
+        usermod -aG "$groups_to_add" "$SERVICE_USER"
+    else
+        info "User already in required groups"
+    fi
+}
+
+# Set up project in target location
+setup_project() {
+    info "Setting up project files..."
+
+    if [ "$SOURCE_PROJECT" = "$TARGET_PROJECT" ]; then
+        info "Already running from target location"
+    elif [ -d "$TARGET_PROJECT" ]; then
+        info "Target directory exists, updating files..."
+        rsync -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
+            "$SOURCE_PROJECT/" "$TARGET_PROJECT/"
+    else
+        info "Copying project to $TARGET_PROJECT..."
+        mkdir -p "$TARGET_PROJECT"
+        rsync -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
+            "$SOURCE_PROJECT/" "$TARGET_PROJECT/"
+    fi
+
+    # Set ownership
+    info "Setting ownership to $SERVICE_USER..."
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$TARGET_PROJECT"
+}
+
+# Set up Python virtual environment
+setup_virtualenv() {
+    info "Checking Python virtual environment..."
+
+    if [ -d "$VENV_PATH" ]; then
+        info "Virtual environment exists at $VENV_PATH"
+    else
+        info "Creating virtual environment..."
+        sudo -u "$SERVICE_USER" python3 -m venv --system-site-packages "$VENV_PATH"
+        info "Virtual environment created"
+    fi
+
+    # Install/upgrade dependencies
+    info "Installing Python dependencies..."
+    sudo -u "$SERVICE_USER" "$VENV_PATH/bin/pip" install --upgrade pip
+    sudo -u "$SERVICE_USER" "$VENV_PATH/bin/pip" install -r "$TARGET_PROJECT/requirements.txt"
+    info "Dependencies installed"
+}
 
 # Check and setup environment file
 setup_environment() {
     info "Checking environment configuration..."
 
-    # Detect the service user for proper ownership
-    SERVICE_USER=$(grep "^User=" "$SOURCE_SERVICE" 2>/dev/null | cut -d= -f2 | tr -d ' ')
-    SERVICE_USER=${SERVICE_USER:-weather}
+    local env_example="$TARGET_PROJECT/config/mqtt.env.example"
+    local env_file="$TARGET_PROJECT/config/mqtt.env"
 
-    if [ ! -f "$ENV_FILE" ]; then
-        warn "Environment file not found: $ENV_FILE"
+    if [ ! -f "$env_file" ]; then
+        warn "Environment file not found: $env_file"
 
-        if [ -f "$ENV_EXAMPLE" ]; then
+        if [ -f "$env_example" ]; then
             echo ""
             prompt "Would you like to create it from the example template?"
             read -p "Create mqtt.env? [Y/n] " -n 1 -r
             echo ""
 
             if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                cp "$ENV_EXAMPLE" "$ENV_FILE"
-                chmod 600 "$ENV_FILE"
-                chown "$SERVICE_USER:$SERVICE_USER" "$ENV_FILE"
-                info "Created $ENV_FILE from template (owned by $SERVICE_USER)"
+                cp "$env_example" "$env_file"
+                chmod 600 "$env_file"
+                chown "$SERVICE_USER:$SERVICE_USER" "$env_file"
+                info "Created $env_file from template"
                 echo ""
-                warn "⚠️  IMPORTANT: You must edit $ENV_FILE before starting the service!"
+                warn "⚠️  IMPORTANT: You must edit $env_file before starting the service!"
                 echo ""
                 echo "Required settings:"
                 echo "  - MQTT_SERVER (your MQTT broker hostname/IP)"
@@ -81,47 +155,38 @@ setup_environment() {
                 echo ""
 
                 if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                    # Try to use the user's preferred editor
                     EDITOR="${SUDO_EDITOR:-${EDITOR:-nano}}"
-                    $EDITOR "$ENV_FILE"
+                    $EDITOR "$env_file"
                 fi
             else
                 error "Service requires mqtt.env file - create it manually"
                 exit 1
             fi
         else
-            error "Template not found: $ENV_EXAMPLE"
-            error "Cannot proceed without environment configuration"
+            error "Template not found: $env_example"
             exit 1
         fi
     else
-        info "Environment file exists: $ENV_FILE"
+        info "Environment file exists: $env_file"
 
-        # Validate required variables
-        if ! grep -q "^MQTT_SERVER=" "$ENV_FILE"; then
-            warn "MQTT_SERVER not set in $ENV_FILE"
+        if ! grep -q "^MQTT_SERVER=" "$env_file"; then
+            warn "MQTT_SERVER not set in $env_file"
         fi
     fi
 
     # Ensure proper permissions and ownership
-    chmod 600 "$ENV_FILE"
-    chown "$SERVICE_USER:$SERVICE_USER" "$ENV_FILE"
-    info "Environment file permissions set to 600, owned by $SERVICE_USER"
+    chmod 600 "$env_file"
+    chown "$SERVICE_USER:$SERVICE_USER" "$env_file"
+    info "Environment file secured"
 }
 
 # Remove old cron job if it exists
 remove_cron() {
     info "Checking for existing cron jobs..."
 
-    # Detect the user from the service file
-    SERVICE_USER=$(grep "^User=" "$SOURCE_SERVICE" 2>/dev/null | cut -d= -f2 | tr -d ' ')
-    SERVICE_USER=${SERVICE_USER:-weather}
-
-    # Check user's crontab
     if sudo -u "$SERVICE_USER" crontab -l 2>/dev/null | grep -q "mqtt.py\|weatherhat"; then
         warn "Found existing cron entry for weather station"
         echo ""
-        echo "Current cron entries:"
         sudo -u "$SERVICE_USER" crontab -l 2>/dev/null | grep -E "mqtt|weather" || true
         echo ""
 
@@ -129,7 +194,6 @@ remove_cron() {
         echo ""
 
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            # Remove lines containing mqtt.py or weatherhat from crontab
             sudo -u "$SERVICE_USER" crontab -l 2>/dev/null | grep -v -E "mqtt\.py|weatherhat" | sudo -u "$SERVICE_USER" crontab - || true
             info "Cron entries removed"
         else
@@ -153,7 +217,7 @@ install_service() {
     info "Installing service file to $SERVICE_FILE..."
     cp "$SOURCE_SERVICE" "$SERVICE_FILE"
     chmod 644 "$SERVICE_FILE"
-    
+
     info "Reloading systemd daemon..."
     systemctl daemon-reload
 }
@@ -162,15 +226,15 @@ install_service() {
 enable_service() {
     info "Enabling $SERVICE_NAME to start on boot..."
     systemctl enable "$SERVICE_NAME"
-    
+
     read -p "Start service now? [Y/n] " -n 1 -r
     echo ""
-    
+
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
         info "Starting $SERVICE_NAME service..."
         systemctl start "$SERVICE_NAME"
         sleep 3
-        
+
         echo ""
         info "Service status:"
         systemctl status "$SERVICE_NAME" --no-pager -l || true
@@ -184,43 +248,40 @@ show_commands() {
     info "Installation complete!"
     echo "=========================================="
     echo ""
-    echo "Configuration file: $ENV_FILE"
+    echo "Service user: $SERVICE_USER"
+    echo "Project location: $TARGET_PROJECT"
+    echo "Virtual environment: $VENV_PATH"
+    echo "Configuration: $TARGET_PROJECT/config/mqtt.env"
     echo ""
     echo "Useful commands:"
-    echo ""
-    echo "  # Edit configuration"
-    echo "  nano $ENV_FILE"
-    echo "  sudo systemctl restart $SERVICE_NAME  # after editing"
     echo ""
     echo "  # Check service status"
     echo "  sudo systemctl status $SERVICE_NAME"
     echo ""
-    echo "  # View live logs (structured logging)"
+    echo "  # View live logs"
     echo "  sudo journalctl -u $SERVICE_NAME -f"
     echo ""
-    echo "  # View recent logs with errors only"
-    echo "  sudo journalctl -u $SERVICE_NAME -p err -n 50"
-    echo ""
-    echo "  # Restart service"
+    echo "  # Edit configuration"
+    echo "  sudo nano $TARGET_PROJECT/config/mqtt.env"
     echo "  sudo systemctl restart $SERVICE_NAME"
     echo ""
-    echo "  # Stop service"
+    echo "  # Restart / stop service"
+    echo "  sudo systemctl restart $SERVICE_NAME"
     echo "  sudo systemctl stop $SERVICE_NAME"
     echo ""
-    echo "  # Disable service from starting at boot"
-    echo "  sudo systemctl disable $SERVICE_NAME"
-    echo ""
-    echo "Performance monitoring:"
-    echo "  # Check CPU/Memory usage"
-    echo "  top -p \$(pgrep -f mqtt.py)"
-    echo ""
-    echo "  # Monitor MQTT data"
-    echo "  mosquitto_sub -h YOUR_MQTT_SERVER -t 'sensors/#' -v"
+    echo "  # Run manually as $SERVICE_USER"
+    echo "  sudo -u $SERVICE_USER $VENV_PATH/bin/python $TARGET_PROJECT/bin/mqtt-publisher.py"
     echo ""
 }
 
 # Main
 main() {
+    setup_user
+    echo ""
+    setup_project
+    echo ""
+    setup_virtualenv
+    echo ""
     setup_environment
     echo ""
     remove_cron

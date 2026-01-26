@@ -1,14 +1,18 @@
 #!/bin/bash
 # install-display-service.sh
 # Installs the Weather HAT display service
+# Note: Run install-service.sh first to set up the weather user and virtualenv
 
 set -e
 
 SERVICE_NAME="weatherhat-display"
+SERVICE_USER="weather"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SOURCE_SERVICE="$PROJECT_ROOT/weatherhat-display.service"
+SOURCE_PROJECT="$(dirname "$SCRIPT_DIR")"
+TARGET_PROJECT="/home/$SERVICE_USER/weather-station"
+SOURCE_SERVICE="$SOURCE_PROJECT/weatherhat-display.service"
+VENV_PATH="/home/$SERVICE_USER/.virtualenvs/pimoroni"
 
 # Colors
 RED='\033[0;31m'
@@ -38,25 +42,39 @@ echo "=========================================="
 echo "Weather HAT Display Service Installer"
 echo "=========================================="
 echo ""
-info "Project root: $PROJECT_ROOT"
+info "Service user: $SERVICE_USER"
+info "Target project: $TARGET_PROJECT"
 echo ""
+
+# Check prerequisites
+check_prerequisites() {
+    info "Checking prerequisites..."
+
+    if ! id "$SERVICE_USER" &>/dev/null; then
+        error "User '$SERVICE_USER' does not exist"
+        error "Run install-service.sh first to set up the user"
+        exit 1
+    fi
+
+    if [ ! -d "$VENV_PATH" ]; then
+        error "Virtual environment not found at $VENV_PATH"
+        error "Run install-service.sh first to set up the environment"
+        exit 1
+    fi
+
+    if [ ! -d "$TARGET_PROJECT" ]; then
+        error "Project not found at $TARGET_PROJECT"
+        error "Run install-service.sh first to set up the project"
+        exit 1
+    fi
+
+    info "Prerequisites OK"
+}
 
 # Check font dependencies
 check_fonts() {
     info "Checking font dependencies..."
 
-    SERVICE_USER=$(grep "^User=" "$SOURCE_SERVICE" 2>/dev/null | cut -d= -f2 | tr -d ' ')
-    SERVICE_USER=${SERVICE_USER:-weather}
-
-    VENV_PATH="/home/$SERVICE_USER/.virtualenvs/pimoroni"
-
-    if [ ! -d "$VENV_PATH" ]; then
-        warn "Virtual environment not found at $VENV_PATH"
-        warn "Run install-dependencies.sh first"
-        return 1
-    fi
-
-    # Check for font packages
     if ! sudo -u "$SERVICE_USER" "$VENV_PATH/bin/python" -c "import fonts" 2>/dev/null; then
         warn "Font packages not installed"
         echo ""
@@ -67,6 +85,7 @@ check_fonts() {
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
             info "Installing fonts..."
             sudo -u "$SERVICE_USER" "$VENV_PATH/bin/pip" install fonts font-manrope
+            info "Fonts installed"
         fi
     else
         info "Font packages installed"
@@ -131,30 +150,19 @@ show_commands() {
     echo "  # View live logs"
     echo "  sudo journalctl -u $SERVICE_NAME -f"
     echo ""
-    echo "  # Restart service"
+    echo "  # Restart / stop service"
     echo "  sudo systemctl restart $SERVICE_NAME"
-    echo ""
-    echo "  # Stop service"
     echo "  sudo systemctl stop $SERVICE_NAME"
     echo ""
-    echo "  # Test manually"
-    echo "  cd $PROJECT_ROOT/bin"
-    echo "  source ~/.virtualenvs/pimoroni/bin/activate"
-    echo "  python3 display-interface.py"
-    echo ""
-    echo "Configuration:"
-    echo "  Edit: /etc/systemd/system/$SERVICE_NAME.service"
-    echo "  Environment variables:"
-    echo "    - TEMP_OFFSET=-7.5"
-    echo "    - DISPLAY_SLEEP_TIMEOUT=30"
-    echo ""
-    echo "Documentation:"
-    echo "  See: $PROJECT_ROOT/docs/DISPLAY_README.md"
+    echo "  # Run manually as $SERVICE_USER"
+    echo "  sudo -u $SERVICE_USER $VENV_PATH/bin/python $TARGET_PROJECT/bin/display-interface.py"
     echo ""
 }
 
 # Main
 main() {
+    check_prerequisites
+    echo ""
     check_fonts
     echo ""
     stop_existing

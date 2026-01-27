@@ -5,16 +5,17 @@ MQTT Weather Station Publisher
 Reads data from WeatherHAT and publishes to MQTT broker.
 Configure via environment variables or config file.
 """
-import os
-import sys
 import json
 import logging
+import os
 import signal
+import sys
 from time import sleep
 
-import weatherhat
-from gpiozero import CPUTemperature
 import paho.mqtt.client as mqtt
+from gpiozero import CPUTemperature
+
+import weatherhat
 
 # Configure logging
 logging.basicConfig(

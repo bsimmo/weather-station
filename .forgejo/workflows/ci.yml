@@ -11,12 +11,15 @@ env:
 
 jobs:
   lint:
-    runs-on: python
+    runs-on: docker
     steps:
       - name: Checkout
-        run: |
-          git clone --depth 1 $GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git .
-          git checkout $GITHUB_SHA || git checkout $GITHUB_REF_NAME
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Install lint tools
         run: pip install ruff codespell isort
@@ -40,11 +43,8 @@ jobs:
           fetch-depth: 0
 
       - name: Set up multi-arch support
-        env:
-          NVIDIA_VISIBLE_DEVICES: ""
         run: |
           docker run --rm --privileged tonistiigi/binfmt --install all
-          docker buildx rm multiarch 2>/dev/null || true
           docker buildx create --use --name multiarch
           docker buildx inspect --bootstrap
 

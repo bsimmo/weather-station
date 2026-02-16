@@ -56,12 +56,17 @@ TOPICS = {
     'rain_total': f"{MQTT_TOPIC_PREFIX}/weather/rain_total",
 }
 
+# Sensor error threshold - exit after this many consecutive I2C failures
+# to allow systemd to restart the process with a fresh connection
+MAX_CONSECUTIVE_SENSOR_ERRORS = 5
+
 # Global state
 sensor = None
 cpu = None
 mqtt_client = None
 running = True
 reconnect_delay = INITIAL_RECONNECT_DELAY
+consecutive_sensor_errors = 0
 
 
 #  Function Definitions
@@ -187,6 +192,7 @@ def initialize_mqtt():
 
 def read_and_publish_data():
     """Read all sensor data and publish to MQTT"""
+    global consecutive_sensor_errors
     try:
         # Update sensor readings
         sensor.update(interval=UPDATE_INTERVAL)
@@ -215,10 +221,15 @@ def read_and_publish_data():
                 success_count += 1
 
         logger.debug(f"Published {success_count}/{len(sensor_data)} sensor readings")
+        consecutive_sensor_errors = 0
         return True
 
     except OSError as e:
-        logger.error(f"I2C/Sensor error: {e}")
+        consecutive_sensor_errors += 1
+        logger.error(f"I2C/Sensor error ({consecutive_sensor_errors}/{MAX_CONSECUTIVE_SENSOR_ERRORS}): {e}")
+        if consecutive_sensor_errors >= MAX_CONSECUTIVE_SENSOR_ERRORS:
+            logger.critical(f"I2C bus failure: {consecutive_sensor_errors} consecutive errors, exiting for systemd restart")
+            sys.exit(1)
         return False
     except Exception as e:
         logger.error(f"Error reading sensors: {e}", exc_info=True)

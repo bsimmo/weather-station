@@ -1,7 +1,12 @@
 #!/bin/bash
 # test-mqtt.sh
 # Diagnostic script for MQTT connectivity issues
-# Run on the Pi to check broker status and test publishing
+# Run on the Pi or remotely against the broker
+#
+# Usage:
+#   ./scripts/test-mqtt.sh                  # Run all tests locally
+#   ./scripts/test-mqtt.sh mqtt.example.com  # Run broker tests against remote host
+#   ./scripts/test-mqtt.sh -h               # Show help
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_PROJECT="$(dirname "$SCRIPT_DIR")"
@@ -18,8 +23,52 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 pass() { echo -e "${GREEN}[PASS]${NC} $1"; }
 fail() { echo -e "${RED}[FAIL]${NC} $1"; }
+skip() { echo -e "${BLUE}[SKIP]${NC} $1"; }
 
-# Load env file if available
+usage() {
+    echo "Usage: $0 [OPTIONS] [BROKER_HOST]"
+    echo ""
+    echo "Run MQTT diagnostics against the weather station broker."
+    echo ""
+    echo "Arguments:"
+    echo "  BROKER_HOST        Override MQTT broker hostname/IP"
+    echo ""
+    echo "Options:"
+    echo "  -p, --port PORT    MQTT broker port (default: from env or 1883)"
+    echo "  -u, --user USER    MQTT username"
+    echo "  -P, --pass PASS    MQTT password"
+    echo "  -i, --id ID        Client ID to test for conflicts"
+    echo "  -t, --prefix PFX   Topic prefix (default: from env or sensors)"
+    echo "  -h, --help         Show this help"
+    echo ""
+    echo "Examples:"
+    echo "  sudo $0                          # On the Pi, using mqtt.env"
+    echo "  $0 mqtt.example.com              # Remote broker test"
+    echo "  $0 -p 8883 -u user -P pass host  # With auth and custom port"
+}
+
+# Parse arguments
+ARG_SERVER=""
+ARG_PORT=""
+ARG_USERNAME=""
+ARG_PASSWORD=""
+ARG_CLIENT_ID=""
+ARG_TOPIC_PREFIX=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help) usage; exit 0 ;;
+        -p|--port) ARG_PORT="$2"; shift 2 ;;
+        -u|--user) ARG_USERNAME="$2"; shift 2 ;;
+        -P|--pass) ARG_PASSWORD="$2"; shift 2 ;;
+        -i|--id) ARG_CLIENT_ID="$2"; shift 2 ;;
+        -t|--prefix) ARG_TOPIC_PREFIX="$2"; shift 2 ;;
+        -*) error "Unknown option: $1"; usage; exit 1 ;;
+        *) ARG_SERVER="$1"; shift ;;
+    esac
+done
+
+# Load env file if available (before applying argument overrides)
 ENV_FILE="$SOURCE_PROJECT/config/mqtt.env"
 if [ -f "$ENV_FILE" ]; then
     set -a
@@ -30,12 +79,19 @@ else
     warn "No mqtt.env found, using defaults"
 fi
 
-MQTT_SERVER="${MQTT_SERVER:-localhost}"
-MQTT_PORT="${MQTT_PORT:-1883}"
-MQTT_USERNAME="${MQTT_USERNAME:-}"
-MQTT_PASSWORD="${MQTT_PASSWORD:-}"
-MQTT_CLIENT_ID="${MQTT_CLIENT_ID:-weatherhat}"
-MQTT_TOPIC_PREFIX="${MQTT_TOPIC_PREFIX:-sensors}"
+# Apply defaults, then argument overrides (args take priority over env)
+MQTT_SERVER="${ARG_SERVER:-${MQTT_SERVER:-localhost}}"
+MQTT_PORT="${ARG_PORT:-${MQTT_PORT:-1883}}"
+MQTT_USERNAME="${ARG_USERNAME:-${MQTT_USERNAME:-}}"
+MQTT_PASSWORD="${ARG_PASSWORD:-${MQTT_PASSWORD:-}}"
+MQTT_CLIENT_ID="${ARG_CLIENT_ID:-${MQTT_CLIENT_ID:-weatherhat}}"
+MQTT_TOPIC_PREFIX="${ARG_TOPIC_PREFIX:-${MQTT_TOPIC_PREFIX:-sensors}}"
+
+# Detect if running remotely (not on the Pi with the service)
+REMOTE=false
+if ! systemctl list-unit-files weatherhat.service &>/dev/null 2>&1; then
+    REMOTE=true
+fi
 
 # Build auth flags
 AUTH_FLAGS=""
@@ -54,6 +110,7 @@ echo "Broker:       $MQTT_SERVER:$MQTT_PORT"
 echo "Client ID:    $MQTT_CLIENT_ID"
 echo "Topic prefix: $MQTT_TOPIC_PREFIX"
 echo "Auth:         $([ -n "$MQTT_USERNAME" ] && echo "yes ($MQTT_USERNAME)" || echo "none")"
+echo "Mode:         $($REMOTE && echo "remote" || echo "local")"
 echo ""
 
 # Check mosquitto clients are installed
@@ -64,6 +121,7 @@ fi
 
 TESTS_PASSED=0
 TESTS_FAILED=0
+TESTS_SKIPPED=0
 
 # Test 1: DNS resolution
 echo "------------------------------------------"
@@ -192,10 +250,13 @@ else
 fi
 echo ""
 
-# Test 7: Check weatherhat service status
+# Test 7: Check weatherhat service status (local only)
 echo "------------------------------------------"
 info "Test 7: Service status"
-if systemctl is-active --quiet weatherhat 2>/dev/null; then
+if $REMOTE; then
+    skip "Skipped (remote mode — service checks require running on the Pi)"
+    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+elif systemctl is-active --quiet weatherhat 2>/dev/null; then
     pass "weatherhat service is running"
     SERVICE_PID=$(systemctl show weatherhat --property=MainPID --value 2>/dev/null)
     if [ -n "$SERVICE_PID" ] && [ "$SERVICE_PID" != "0" ]; then
@@ -218,28 +279,33 @@ else
 fi
 echo ""
 
-# Test 8: Check for recent errors in journal
+# Test 8: Check for recent errors in journal (local only)
 echo "------------------------------------------"
 info "Test 8: Recent service errors (last 50 lines)"
-ERROR_COUNT=$(journalctl -u weatherhat --no-pager -n 50 --since "5 min ago" 2>/dev/null \
-    | grep -ci "error\|critical\|disconnect" || true)
-RECONNECT_COUNT=$(journalctl -u weatherhat --no-pager -n 50 --since "5 min ago" 2>/dev/null \
-    | grep -ci "reconnect\|retrying" || true)
-
-if [ "$ERROR_COUNT" -eq 0 ] && [ "$RECONNECT_COUNT" -eq 0 ]; then
-    pass "No errors or reconnects in last 5 minutes"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
+if $REMOTE; then
+    skip "Skipped (remote mode — journal checks require running on the Pi)"
+    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
 else
-    if [ "$ERROR_COUNT" -gt 0 ]; then
-        fail "$ERROR_COUNT error/critical/disconnect messages in last 5 minutes"
+    ERROR_COUNT=$(journalctl -u weatherhat --no-pager -n 50 --since "5 min ago" 2>/dev/null \
+        | grep -ci "error\|critical\|disconnect" || true)
+    RECONNECT_COUNT=$(journalctl -u weatherhat --no-pager -n 50 --since "5 min ago" 2>/dev/null \
+        | grep -ci "reconnect\|retrying" || true)
+
+    if [ "$ERROR_COUNT" -eq 0 ] && [ "$RECONNECT_COUNT" -eq 0 ]; then
+        pass "No errors or reconnects in last 5 minutes"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        if [ "$ERROR_COUNT" -gt 0 ]; then
+            fail "$ERROR_COUNT error/critical/disconnect messages in last 5 minutes"
+        fi
+        if [ "$RECONNECT_COUNT" -gt 0 ]; then
+            fail "$RECONNECT_COUNT reconnect attempts in last 5 minutes"
+        fi
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo ""
+        warn "Last 10 log lines:"
+        journalctl -u weatherhat --no-pager -n 10 2>/dev/null || true
     fi
-    if [ "$RECONNECT_COUNT" -gt 0 ]; then
-        fail "$RECONNECT_COUNT reconnect attempts in last 5 minutes"
-    fi
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-    echo ""
-    warn "Last 10 log lines:"
-    journalctl -u weatherhat --no-pager -n 10 2>/dev/null || true
 fi
 echo ""
 
@@ -261,9 +327,17 @@ echo ""
 
 # Summary
 echo "=========================================="
+SUMMARY="$TESTS_PASSED passed"
+if [ "$TESTS_FAILED" -gt 0 ]; then
+    SUMMARY="$TESTS_FAILED failed, $SUMMARY"
+fi
+if [ "$TESTS_SKIPPED" -gt 0 ]; then
+    SUMMARY="$SUMMARY, $TESTS_SKIPPED skipped"
+fi
+
 if [ "$TESTS_FAILED" -eq 0 ]; then
-    pass "All $TESTS_PASSED tests passed"
+    pass "All tests passed ($SUMMARY)"
 else
-    fail "$TESTS_FAILED test(s) failed, $TESTS_PASSED passed"
+    fail "$SUMMARY"
 fi
 echo "=========================================="

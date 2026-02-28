@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Development Environment
+
+This repository is developed on a remote dev machine, NOT on the Raspberry Pi. Code cannot be run or tested locally — it must be deployed to the Pi. Do not attempt to run service commands (systemctl, journalctl) or hardware-dependent scripts locally.
+
 ## Project Overview
 
 A Python library and IoT system for reading weather sensor data from a Pimoroni Weather HAT on Raspberry Pi and publishing to MQTT. Includes MQTT publisher service and display interface.
@@ -9,8 +13,11 @@ A Python library and IoT system for reading weather sensor data from a Pimoroni 
 ## Key Commands
 
 ```bash
-# Activate virtual environment (required for all Python commands)
-source ~/.virtualenvs/pimoroni/bin/activate
+# Activate virtual environment
+# On dev machine:
+source .venv/bin/activate
+# On Raspberry Pi:
+# source ~/.virtualenvs/pimoroni/bin/activate
 
 # Run MQTT publisher manually
 python3 bin/mqtt-publisher.py

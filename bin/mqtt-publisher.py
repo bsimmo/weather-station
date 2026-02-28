@@ -61,6 +61,19 @@ TOPICS = {
 # to allow systemd to restart the process with a fresh connection
 MAX_CONSECUTIVE_SENSOR_ERRORS = 5
 
+# Timeout for sensor reads - if an I2C call hangs longer than this,
+# we treat it as a sensor error so we can still reach the error threshold
+SENSOR_READ_TIMEOUT = 30  # seconds
+
+
+class SensorTimeout(Exception):
+    """Raised when a sensor read exceeds SENSOR_READ_TIMEOUT."""
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise SensorTimeout(f"Sensor read timed out after {SENSOR_READ_TIMEOUT}s")
+
 # Global state
 sensor = None
 cpu = None
@@ -193,25 +206,33 @@ def read_and_publish_data():
     """Read all sensor data and publish to MQTT"""
     global consecutive_sensor_errors
     try:
-        # Update sensor readings
-        sensor.update(interval=UPDATE_INTERVAL)
+        # Set a timeout so a hung I2C bus doesn't block forever
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(SENSOR_READ_TIMEOUT)
 
-        # Read all values
-        wind_direction_cardinal = sensor.degrees_to_cardinal(sensor.wind_direction)
+        try:
+            # Update sensor readings
+            sensor.update(interval=UPDATE_INTERVAL)
 
-        sensor_data = {
-            'cpu_temp': cpu.temperature,
-            'temperature': sensor.temperature,
-            'humidity': sensor.humidity,
-            'relative_humidity': sensor.relative_humidity,
-            'pressure': sensor.pressure,
-            'dewpoint': sensor.dewpoint,
-            'light': sensor.lux,
-            'wind_direction': wind_direction_cardinal,
-            'wind_speed': sensor.wind_speed,
-            'rain': sensor.rain,
-            'rain_total': sensor.rain_total,
-        }
+            # Read all values
+            wind_direction_cardinal = sensor.degrees_to_cardinal(sensor.wind_direction)
+
+            sensor_data = {
+                'cpu_temp': cpu.temperature,
+                'temperature': sensor.temperature,
+                'humidity': sensor.humidity,
+                'relative_humidity': sensor.relative_humidity,
+                'pressure': sensor.pressure,
+                'dewpoint': sensor.dewpoint,
+                'light': sensor.lux,
+                'wind_direction': wind_direction_cardinal,
+                'wind_speed': sensor.wind_speed,
+                'rain': sensor.rain,
+                'rain_total': sensor.rain_total,
+            }
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
 
         # Publish all readings
         success_count = 0
@@ -223,7 +244,7 @@ def read_and_publish_data():
         consecutive_sensor_errors = 0
         return True
 
-    except OSError as e:
+    except (OSError, SensorTimeout) as e:
         consecutive_sensor_errors += 1
         logger.error(f"I2C/Sensor error ({consecutive_sensor_errors}/{MAX_CONSECUTIVE_SENSOR_ERRORS}): {e}")
         if consecutive_sensor_errors >= MAX_CONSECUTIVE_SENSOR_ERRORS:

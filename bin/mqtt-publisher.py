@@ -273,16 +273,16 @@ def main():
         else:
             # Connection lost - attempt reconnect with exponential backoff
             logger.warning(f"MQTT disconnected. Retrying in {reconnect_delay}s...")
+            sleep(reconnect_delay)
 
             try:
                 mqtt_client.reconnect()
-                logger.info("Reconnection successful")
+                logger.info("Reconnect initiated, waiting for broker handshake...")
             except Exception as e:
                 logger.error(f"Reconnect failed: {e}")
 
-                # Exponential backoff with max limit
-                sleep(reconnect_delay)
-                reconnect_delay = min(reconnect_delay * 2, MAX_RECONNECT_DELAY)
+            # Exponential backoff with max limit
+            reconnect_delay = min(reconnect_delay * 2, MAX_RECONNECT_DELAY)
 
     # Cleanup
     logger.info("Shutting down...")

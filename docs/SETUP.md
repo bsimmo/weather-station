@@ -103,7 +103,7 @@ MQTT_TOPIC_PREFIX=sensors
 # Sensor Settings
 TEMP_OFFSET=-7.5          # Temperature compensation (adjust for your Pi)
 UPDATE_INTERVAL=2.0       # Sensor read interval (seconds)
-PUBLISH_INTERVAL=2.0      # MQTT publish interval (seconds)
+PUBLISH_INTERVAL=5.0      # MQTT publish interval (seconds)
 ```
 
 After editing:
@@ -298,7 +298,7 @@ sudo journalctl -u weatherhat -n 100 | grep -i error
 Expected resource usage:
 - **CPU**: <1% average
 - **Memory**: 30-50 MB
-- **MQTT messages**: Every 2 seconds (configurable)
+- **MQTT messages**: Every 5 seconds (configurable)
 
 ## Security Notes
 

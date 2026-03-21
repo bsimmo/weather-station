@@ -53,7 +53,7 @@ All settings are configured via environment variables in `config/mqtt.env`:
 | `MQTT_TOPIC_PREFIX` | `sensors` | Topic prefix for all messages |
 | `TEMP_OFFSET` | `-7.5` | Temperature compensation offset (°C) |
 | `UPDATE_INTERVAL` | `2.0` | Sensor update interval (seconds) |
-| `PUBLISH_INTERVAL` | `2.0` | MQTT publish interval (seconds) |
+| `PUBLISH_INTERVAL` | `5.0` | MQTT publish interval (seconds) |
 
 ### Example Configuration
 
@@ -69,7 +69,7 @@ MQTT_TOPIC_PREFIX=sensors
 
 TEMP_OFFSET=-7.5
 UPDATE_INTERVAL=2.0
-PUBLISH_INTERVAL=2.0
+PUBLISH_INTERVAL=5.0
 ```
 
 ## Running

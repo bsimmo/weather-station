@@ -18,6 +18,7 @@ import paho.mqtt.client as mqtt
 from gpiozero import CPUTemperature
 
 import weatherhat
+from weatherhat.i2c_recovery import attempt_i2c_recovery
 
 # Configure logging
 logging.basicConfig(
@@ -37,7 +38,7 @@ MQTT_TOPIC_PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "sensors")
 # Sensor configuration
 TEMP_OFFSET = float(os.getenv("TEMP_OFFSET", "-7.5"))
 UPDATE_INTERVAL = float(os.getenv("UPDATE_INTERVAL", "2.0"))
-PUBLISH_INTERVAL = float(os.getenv("PUBLISH_INTERVAL", "2.0"))
+PUBLISH_INTERVAL = float(os.getenv("PUBLISH_INTERVAL", "5.0"))
 
 # Retry configuration
 MAX_RECONNECT_DELAY = 300  # 5 minutes max
@@ -64,6 +65,9 @@ TOPICS = {
 # Sensor error threshold - exit after this many consecutive I2C failures
 # to allow systemd to restart the process with a fresh connection
 MAX_CONSECUTIVE_SENSOR_ERRORS = 5
+
+# Attempt I2C bus recovery after this many consecutive errors (before giving up)
+I2C_RECOVERY_THRESHOLD = 3
 
 # Timeout for sensor reads - if an I2C call hangs longer than this,
 # we treat it as a sensor error so we can still reach the error threshold
@@ -204,6 +208,27 @@ def initialize_sensors():
         return False
 
 
+def reinitialize_sensors():
+    """Reinitialize sensors after I2C bus recovery.
+
+    After bus recovery the driver is rebound and /dev/i2c-1 is recreated,
+    so existing SMBus file descriptors are stale and must be reopened.
+    """
+    global sensor, cpu
+    try:
+        logger.info("Reinitializing sensors after I2C recovery...")
+        sensor = weatherhat.WeatherHAT()
+        sensor.temperature_offset = TEMP_OFFSET
+        cpu = CPUTemperature()
+        # Quick update to verify sensors are responsive (no warmup needed)
+        sensor.update(interval=1.0)
+        logger.info("Sensors reinitialized successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to reinitialize sensors after recovery: {e}")
+        return False
+
+
 def initialize_mqtt():
     """Initialize MQTT client with authentication and callbacks"""
     global mqtt_client
@@ -285,6 +310,18 @@ def read_and_publish_data():
     except (OSError, SensorTimeout) as e:
         consecutive_sensor_errors += 1
         logger.error(f"I2C/Sensor error ({consecutive_sensor_errors}/{MAX_CONSECUTIVE_SENSOR_ERRORS}): {e}")
+
+        # Attempt I2C bus recovery before giving up
+        if consecutive_sensor_errors == I2C_RECOVERY_THRESHOLD:
+            logger.warning(f"Hit {I2C_RECOVERY_THRESHOLD} consecutive errors, attempting I2C bus recovery...")
+            if attempt_i2c_recovery():
+                if reinitialize_sensors():
+                    logger.info("I2C recovery and sensor reinitialization succeeded, resetting error counter")
+                    consecutive_sensor_errors = 0
+                    return False
+                else:
+                    logger.error("Sensors failed to reinitialize after bus recovery")
+
         if consecutive_sensor_errors >= MAX_CONSECUTIVE_SENSOR_ERRORS:
             logger.critical(f"I2C bus failure: {consecutive_sensor_errors} consecutive errors, exiting for systemd restart")
             os._exit(1)
@@ -350,4 +387,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Fatal error: {e}", exc_info=True)
         os._exit(1)
-

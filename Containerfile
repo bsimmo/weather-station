@@ -57,6 +57,6 @@ ENV MQTT_SERVER=localhost \
     MQTT_TOPIC_PREFIX=sensors \
     TEMP_OFFSET=-7.5 \
     UPDATE_INTERVAL=2.0 \
-    PUBLISH_INTERVAL=2.0
+    PUBLISH_INTERVAL=5.0
 
 ENTRYPOINT ["python3", "bin/mqtt-publisher.py"]

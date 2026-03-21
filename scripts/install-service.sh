@@ -180,6 +180,30 @@ setup_environment() {
     info "Environment file secured"
 }
 
+# Install sudoers rule for I2C bus recovery
+setup_sudoers() {
+    info "Checking sudoers for I2C recovery..."
+
+    local sudoers_file="/etc/sudoers.d/weatherhat-i2c-recovery"
+    local recovery_script="$TARGET_PROJECT/scripts/i2c-bus-recovery.sh"
+    local expected="$SERVICE_USER ALL=(root) NOPASSWD: $recovery_script"
+
+    if [ -f "$sudoers_file" ] && grep -qF "$recovery_script" "$sudoers_file"; then
+        info "Sudoers rule already in place"
+    else
+        info "Installing sudoers rule for I2C bus recovery..."
+        echo "$expected" > "$sudoers_file"
+        chmod 440 "$sudoers_file"
+        # Validate syntax before leaving it in place
+        if visudo -cf "$sudoers_file" &>/dev/null; then
+            info "Sudoers rule installed: $sudoers_file"
+        else
+            rm -f "$sudoers_file"
+            error "Sudoers syntax check failed, removed $sudoers_file"
+        fi
+    fi
+}
+
 # Remove old cron job if it exists
 remove_cron() {
     info "Checking for existing cron jobs..."
@@ -283,6 +307,8 @@ main() {
     setup_virtualenv
     echo ""
     setup_environment
+    echo ""
+    setup_sudoers
     echo ""
     remove_cron
     echo ""

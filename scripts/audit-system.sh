@@ -1,7 +1,11 @@
 #!/bin/bash
 # audit-system.sh
 # Comprehensive system audit for Weather Station optimization
-# Run as: sudo ./audit-system.sh | tee audit-report.txt
+#
+# Usage:
+#   sudo ./audit-system.sh              # Full audit report
+#   sudo ./audit-system.sh --check      # Quick optimization check (for use in update.sh)
+#   sudo ./audit-system.sh | tee audit-report.txt
 
 set -e
 
@@ -12,6 +16,130 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
+
+# ─────────────────────────────────────────────────────────────────────
+# Quick check mode: lightweight optimization check for use by update.sh
+# Prints warnings for missing optimizations, exits with count of findings
+# ─────────────────────────────────────────────────────────────────────
+if [ "$1" = "--check" ]; then
+    findings=0
+
+    # --- Services that should be disabled for a headless weather station ---
+    UNNECESSARY_SERVICES=(
+        "bluetooth:Bluetooth (not used by Weather HAT)"
+        "hciuart:Bluetooth UART (not used)"
+        "ModemManager:Modem manager (no modem)"
+        "triggerhappy:Hotkey daemon (headless)"
+        "wpa_supplicant:Legacy WiFi (NetworkManager handles WiFi)"
+        "udisks2:Disk automount (headless)"
+        "console-setup:Console fonts (headless)"
+        "keyboard-setup:Keyboard config (headless)"
+        "rpi-display-backlight:Display backlight (no display)"
+        "avahi-daemon:mDNS/Bonjour (not needed if using IP)"
+        "dphys-swapfile:Swap on SD card (causes wear, RAM is sufficient)"
+    )
+
+    enabled_findings=0
+    for entry in "${UNNECESSARY_SERVICES[@]}"; do
+        svc="${entry%%:*}"
+        reason="${entry#*:}"
+        if systemctl is-enabled "$svc" 2>/dev/null | grep -q "enabled"; then
+            if [ "$enabled_findings" -eq 0 ]; then
+                echo -e "${YELLOW}[WARN]${NC} Unnecessary services still enabled:"
+            fi
+            echo -e "  ${YELLOW}●${NC} $svc - $reason"
+            enabled_findings=$((enabled_findings + 1))
+        fi
+    done
+    if [ "$enabled_findings" -gt 0 ]; then
+        echo -e "  ${CYAN}→${NC} Disable with: sudo systemctl disable --now <service>"
+        findings=$((findings + enabled_findings))
+    fi
+
+    # --- config.txt power optimizations ---
+    CONFIG_TXT=""
+    [ -f /boot/firmware/config.txt ] && CONFIG_TXT="/boot/firmware/config.txt"
+    [ -f /boot/config.txt ] && CONFIG_TXT="/boot/config.txt"
+
+    if [ -n "$CONFIG_TXT" ]; then
+        config_findings=0
+
+        # Check for HDMI disabled
+        if ! grep -qE "^dtoverlay=vc4-kms-v3d,nohdmi" "$CONFIG_TXT" 2>/dev/null; then
+            if [ "$config_findings" -eq 0 ]; then
+                echo -e "${YELLOW}[WARN]${NC} Missing config.txt power optimizations ($CONFIG_TXT):"
+            fi
+            echo -e "  ${YELLOW}●${NC} HDMI not disabled (saves ~30mA)"
+            echo -e "  ${CYAN}→${NC} Add: dtoverlay=vc4-kms-v3d,nohdmi"
+            config_findings=$((config_findings + 1))
+        fi
+
+        # Check for Bluetooth hardware disabled
+        if ! grep -qE "^dtoverlay=disable-bt" "$CONFIG_TXT" 2>/dev/null; then
+            if [ "$config_findings" -eq 0 ]; then
+                echo -e "${YELLOW}[WARN]${NC} Missing config.txt power optimizations ($CONFIG_TXT):"
+            fi
+            echo -e "  ${YELLOW}●${NC} Bluetooth hardware not disabled (saves ~20mA)"
+            echo -e "  ${CYAN}→${NC} Add: dtoverlay=disable-bt"
+            config_findings=$((config_findings + 1))
+        fi
+
+        # Check for audio disabled
+        if ! grep -qE "^dtparam=audio=off" "$CONFIG_TXT" 2>/dev/null; then
+            if [ "$config_findings" -eq 0 ]; then
+                echo -e "${YELLOW}[WARN]${NC} Missing config.txt power optimizations ($CONFIG_TXT):"
+            fi
+            echo -e "  ${YELLOW}●${NC} Audio not disabled"
+            echo -e "  ${CYAN}→${NC} Add: dtparam=audio=off"
+            config_findings=$((config_findings + 1))
+        fi
+
+        findings=$((findings + config_findings))
+    fi
+
+    # --- Swap check ---
+    if swapon --show 2>/dev/null | grep -q .; then
+        echo -e "${YELLOW}[WARN]${NC} Swap is active on SD card (wastes writes, RAM is sufficient)"
+        echo -e "  ${CYAN}→${NC} Disable: sudo dphys-swapfile swapoff && sudo systemctl disable dphys-swapfile"
+        findings=$((findings + 1))
+    fi
+
+    # --- WiFi power save ---
+    if iw dev wlan0 get power_save 2>/dev/null | grep -q "off"; then
+        echo -e "${YELLOW}[WARN]${NC} WiFi power save is OFF"
+        echo -e "  ${CYAN}→${NC} Enable: sudo iw dev wlan0 set power_save on"
+        findings=$((findings + 1))
+    fi
+
+    # --- Undervoltage check ---
+    if command -v vcgencmd &>/dev/null; then
+        throttled=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+        if [ -n "$throttled" ]; then
+            value=$((throttled))
+            if (( value & (1 << 0) )); then
+                echo -e "${RED}[CRIT]${NC} Undervoltage detected RIGHT NOW - check power supply"
+                findings=$((findings + 1))
+            elif (( value & (1 << 16) )); then
+                echo -e "${YELLOW}[WARN]${NC} Undervoltage has occurred since boot (throttled=$throttled)"
+                findings=$((findings + 1))
+            fi
+        fi
+    fi
+
+    # --- Summary ---
+    if [ "$findings" -eq 0 ]; then
+        echo -e "${GREEN}[OK]${NC} All power optimizations applied"
+    else
+        echo ""
+        echo -e "${YELLOW}Found $findings optimization(s) to address${NC}"
+    fi
+
+    exit "$findings"
+fi
+
+# ─────────────────────────────────────────────────────────────────────
+# Full audit mode (default)
+# ─────────────────────────────────────────────────────────────────────
 
 header() { echo -e "\n${BLUE}═══════════════════════════════════════════════════════════════${NC}"; echo -e "${CYAN}  $1${NC}"; echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}\n"; }
 info() { echo -e "${GREEN}[INFO]${NC} $1"; }

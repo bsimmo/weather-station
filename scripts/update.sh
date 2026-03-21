@@ -70,6 +70,21 @@ else
     info "requirements.txt unchanged, skipping pip install"
 fi
 
+# Ensure sudoers rule for I2C recovery
+SUDOERS_FILE="/etc/sudoers.d/weatherhat-i2c-recovery"
+RECOVERY_SCRIPT="$TARGET_PROJECT/scripts/i2c-bus-recovery.sh"
+if [ ! -f "$SUDOERS_FILE" ] || ! grep -qF "$RECOVERY_SCRIPT" "$SUDOERS_FILE"; then
+    info "Installing sudoers rule for I2C bus recovery..."
+    echo "$SERVICE_USER ALL=(root) NOPASSWD: $RECOVERY_SCRIPT" > "$SUDOERS_FILE"
+    chmod 440 "$SUDOERS_FILE"
+    if visudo -cf "$SUDOERS_FILE" &>/dev/null; then
+        info "Sudoers rule installed"
+    else
+        rm -f "$SUDOERS_FILE"
+        warn "Sudoers syntax check failed, removed $SUDOERS_FILE"
+    fi
+fi
+
 # Reload service file if it changed
 if ! diff -q "$SOURCE_SERVICE" /etc/systemd/system/weatherhat.service &>/dev/null; then
     info "Service file changed, updating..."
@@ -88,4 +103,14 @@ sleep 3
 info "Service status:"
 systemctl status "$SERVICE_NAME" --no-pager -l || true
 echo ""
+
+# Run optimization check
+AUDIT_SCRIPT="$TARGET_PROJECT/scripts/audit-system.sh"
+if [ -x "$AUDIT_SCRIPT" ]; then
+    echo ""
+    info "Checking system optimizations..."
+    "$AUDIT_SCRIPT" --check || true
+    echo ""
+fi
+
 info "Update complete"

@@ -70,6 +70,11 @@ else
     info "requirements.txt unchanged, skipping pip install"
 fi
 
+# Reinstall local weatherhat package so new/changed modules are picked up
+info "Reinstalling weatherhat package..."
+sudo -u "$SERVICE_USER" "$VENV_PATH/bin/pip" install --no-deps "$TARGET_PROJECT" >/dev/null 2>&1
+info "weatherhat package updated"
+
 # Ensure sudoers rule for I2C recovery
 SUDOERS_FILE="/etc/sudoers.d/weatherhat-i2c-recovery"
 RECOVERY_SCRIPT="$TARGET_PROJECT/scripts/i2c-bus-recovery.sh"

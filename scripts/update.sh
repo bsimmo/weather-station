@@ -109,12 +109,22 @@ info "Service status:"
 systemctl status "$SERVICE_NAME" --no-pager -l || true
 echo ""
 
-# Run optimization check
+# Run optimization check and offer to fix
 AUDIT_SCRIPT="$TARGET_PROJECT/scripts/audit-system.sh"
 if [ -x "$AUDIT_SCRIPT" ]; then
     echo ""
     info "Checking system optimizations..."
-    "$AUDIT_SCRIPT" --check || true
+    "$AUDIT_SCRIPT" --check
+    check_result=$?
+
+    if [ "$check_result" -gt 0 ]; then
+        echo ""
+        read -r -p "$(echo -e "${BLUE}[?]${NC}") Apply fixes? [y/N] " apply_fixes
+        if [[ "$apply_fixes" =~ ^[Yy]$ ]]; then
+            echo ""
+            "$AUDIT_SCRIPT" --fix
+        fi
+    fi
     echo ""
 fi
 

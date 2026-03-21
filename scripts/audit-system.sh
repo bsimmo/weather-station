@@ -18,11 +18,15 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # ─────────────────────────────────────────────────────────────────────
-# Quick check mode: lightweight optimization check for use by update.sh
-# Prints warnings for missing optimizations, exits with count of findings
+# Quick check / fix mode for use by update.sh
+#   --check   Report missing optimizations, exit with count of findings
+#   --fix     Apply all safe remediations (services, config.txt, swap)
 # ─────────────────────────────────────────────────────────────────────
-if [ "$1" = "--check" ]; then
+if [ "$1" = "--check" ] || [ "$1" = "--fix" ]; then
+    MODE="$1"
     findings=0
+    fixed=0
+    needs_reboot=false
 
     # --- Services that should be disabled for a headless weather station ---
     UNNECESSARY_SERVICES=(
@@ -39,21 +43,34 @@ if [ "$1" = "--check" ]; then
         "dphys-swapfile:Swap on SD card (causes wear, RAM is sufficient)"
     )
 
-    enabled_findings=0
+    services_to_disable=()
     for entry in "${UNNECESSARY_SERVICES[@]}"; do
         svc="${entry%%:*}"
         reason="${entry#*:}"
         if systemctl is-enabled "$svc" 2>/dev/null | grep -q "enabled"; then
-            if [ "$enabled_findings" -eq 0 ]; then
+            if [ "${#services_to_disable[@]}" -eq 0 ]; then
                 echo -e "${YELLOW}[WARN]${NC} Unnecessary services still enabled:"
             fi
             echo -e "  ${YELLOW}●${NC} $svc - $reason"
-            enabled_findings=$((enabled_findings + 1))
+            services_to_disable+=("$svc")
         fi
     done
-    if [ "$enabled_findings" -gt 0 ]; then
-        echo -e "  ${CYAN}→${NC} Disable with: sudo systemctl disable --now <service>"
-        findings=$((findings + enabled_findings))
+
+    if [ "${#services_to_disable[@]}" -gt 0 ]; then
+        findings=$((findings + ${#services_to_disable[@]}))
+        if [ "$MODE" = "--fix" ]; then
+            echo -e "  ${CYAN}→${NC} Disabling ${#services_to_disable[@]} service(s)..."
+            for svc in "${services_to_disable[@]}"; do
+                if systemctl disable --now "$svc" 2>/dev/null; then
+                    echo -e "  ${GREEN}✓${NC} Disabled $svc"
+                    fixed=$((fixed + 1))
+                else
+                    echo -e "  ${RED}✗${NC} Failed to disable $svc"
+                fi
+            done
+        else
+            echo -e "  ${CYAN}→${NC} Disable with: sudo systemctl disable --now <service>"
+        fi
     fi
 
     # --- config.txt power optimizations ---
@@ -62,56 +79,65 @@ if [ "$1" = "--check" ]; then
     [ -f /boot/config.txt ] && CONFIG_TXT="/boot/config.txt"
 
     if [ -n "$CONFIG_TXT" ]; then
-        config_findings=0
+        # Each entry: "setting:description"
+        CONFIG_OPTS=(
+            "dtoverlay=vc4-kms-v3d,nohdmi:HDMI not disabled (saves ~30mA)"
+            "dtoverlay=disable-bt:Bluetooth hardware not disabled (saves ~20mA)"
+            "dtparam=audio=off:Audio not disabled"
+        )
 
-        # Check for HDMI disabled
-        if ! grep -qE "^dtoverlay=vc4-kms-v3d,nohdmi" "$CONFIG_TXT" 2>/dev/null; then
-            if [ "$config_findings" -eq 0 ]; then
-                echo -e "${YELLOW}[WARN]${NC} Missing config.txt power optimizations ($CONFIG_TXT):"
+        config_header_shown=false
+        for entry in "${CONFIG_OPTS[@]}"; do
+            setting="${entry%%:*}"
+            desc="${entry#*:}"
+            if ! grep -qE "^${setting}$" "$CONFIG_TXT" 2>/dev/null; then
+                if ! $config_header_shown; then
+                    echo -e "${YELLOW}[WARN]${NC} Missing config.txt power optimizations ($CONFIG_TXT):"
+                    config_header_shown=true
+                fi
+                findings=$((findings + 1))
+                if [ "$MODE" = "--fix" ]; then
+                    echo "$setting" >> "$CONFIG_TXT"
+                    echo -e "  ${GREEN}✓${NC} Added: $setting"
+                    fixed=$((fixed + 1))
+                    needs_reboot=true
+                else
+                    echo -e "  ${YELLOW}●${NC} $desc"
+                    echo -e "  ${CYAN}→${NC} Add: $setting"
+                fi
             fi
-            echo -e "  ${YELLOW}●${NC} HDMI not disabled (saves ~30mA)"
-            echo -e "  ${CYAN}→${NC} Add: dtoverlay=vc4-kms-v3d,nohdmi"
-            config_findings=$((config_findings + 1))
-        fi
-
-        # Check for Bluetooth hardware disabled
-        if ! grep -qE "^dtoverlay=disable-bt" "$CONFIG_TXT" 2>/dev/null; then
-            if [ "$config_findings" -eq 0 ]; then
-                echo -e "${YELLOW}[WARN]${NC} Missing config.txt power optimizations ($CONFIG_TXT):"
-            fi
-            echo -e "  ${YELLOW}●${NC} Bluetooth hardware not disabled (saves ~20mA)"
-            echo -e "  ${CYAN}→${NC} Add: dtoverlay=disable-bt"
-            config_findings=$((config_findings + 1))
-        fi
-
-        # Check for audio disabled
-        if ! grep -qE "^dtparam=audio=off" "$CONFIG_TXT" 2>/dev/null; then
-            if [ "$config_findings" -eq 0 ]; then
-                echo -e "${YELLOW}[WARN]${NC} Missing config.txt power optimizations ($CONFIG_TXT):"
-            fi
-            echo -e "  ${YELLOW}●${NC} Audio not disabled"
-            echo -e "  ${CYAN}→${NC} Add: dtparam=audio=off"
-            config_findings=$((config_findings + 1))
-        fi
-
-        findings=$((findings + config_findings))
+        done
     fi
 
     # --- Swap check ---
     if swapon --show 2>/dev/null | grep -q .; then
-        echo -e "${YELLOW}[WARN]${NC} Swap is active on SD card (wastes writes, RAM is sufficient)"
-        echo -e "  ${CYAN}→${NC} Disable: sudo dphys-swapfile swapoff && sudo systemctl disable dphys-swapfile"
         findings=$((findings + 1))
+        if [ "$MODE" = "--fix" ]; then
+            echo -e "${CYAN}→${NC} Disabling swap..."
+            dphys-swapfile swapoff 2>/dev/null || swapoff -a 2>/dev/null || true
+            systemctl disable dphys-swapfile 2>/dev/null || true
+            echo -e "${GREEN}✓${NC} Swap disabled"
+            fixed=$((fixed + 1))
+        else
+            echo -e "${YELLOW}[WARN]${NC} Swap is active on SD card (wastes writes, RAM is sufficient)"
+            echo -e "  ${CYAN}→${NC} Disable: sudo dphys-swapfile swapoff && sudo systemctl disable dphys-swapfile"
+        fi
     fi
 
     # --- WiFi power save ---
     if iw dev wlan0 get power_save 2>/dev/null | grep -q "off"; then
-        echo -e "${YELLOW}[WARN]${NC} WiFi power save is OFF"
-        echo -e "  ${CYAN}→${NC} Enable: sudo iw dev wlan0 set power_save on"
         findings=$((findings + 1))
+        if [ "$MODE" = "--fix" ]; then
+            iw dev wlan0 set power_save on 2>/dev/null || true
+            echo -e "${GREEN}✓${NC} WiFi power save enabled"
+            fixed=$((fixed + 1))
+        else
+            echo -e "${YELLOW}[WARN]${NC} WiFi power save is OFF"
+            echo -e "  ${CYAN}→${NC} Enable: sudo iw dev wlan0 set power_save on"
+        fi
     fi
 
-    # --- Undervoltage check ---
+    # --- Undervoltage check (report only, not fixable) ---
     if command -v vcgencmd &>/dev/null; then
         throttled=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
         if [ -n "$throttled" ]; then
@@ -129,6 +155,12 @@ if [ "$1" = "--check" ]; then
     # --- Summary ---
     if [ "$findings" -eq 0 ]; then
         echo -e "${GREEN}[OK]${NC} All power optimizations applied"
+    elif [ "$MODE" = "--fix" ]; then
+        echo ""
+        echo -e "${GREEN}Fixed $fixed of $findings finding(s)${NC}"
+        if $needs_reboot; then
+            echo -e "${YELLOW}[NOTE]${NC} config.txt changes require a reboot to take effect"
+        fi
     else
         echo ""
         echo -e "${YELLOW}Found $findings optimization(s) to address${NC}"

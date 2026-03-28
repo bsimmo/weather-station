@@ -134,6 +134,14 @@ Environment variables for MQTT publisher (set in `config/mqtt.env`):
 - `TEMP_OFFSET` - temperature compensation (default: -7.5°C)
 - `UPDATE_INTERVAL`/`PUBLISH_INTERVAL` - timing in seconds
 
+## Deployment
+
+When deploying fixes to remote devices (Raspberry Pi, weather stations), always update the deployment/sync scripts (e.g., update.sh, sdr-update.sh) to include any new files or dependencies. Verify the full deployment pipeline, not just the local fix.
+
+## Debugging Patterns
+
+When debugging services (MQTT, WebSocket, background threads): suspect threading/process lifecycle issues first (zombie processes, race conditions with reconnect loops, sys.exit not killing threads). Use os._exit() for daemon processes with background threads.
+
 ## Hardware Requirements
 
 - Raspberry Pi with 40-pin GPIO header

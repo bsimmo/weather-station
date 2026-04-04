@@ -39,7 +39,7 @@ The install script handles everything: creates the `weather` service user, sets 
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/weather-station.git
+git clone https://github.com/timFinn/weather-station.git
 cd weather-station
 
 # Run the installer (as root)

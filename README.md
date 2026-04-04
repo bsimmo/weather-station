@@ -4,12 +4,15 @@ A Python weather station for Raspberry Pi using the Pimoroni Weather HAT. Reads 
 
 ## Features
 
-- **MQTT Publishing** - Sends sensor data to any MQTT broker
+- **MQTT Publishing** - Sends weather and system data to any MQTT broker with QoS 1
+- **Resilient Operation** - Automatic I2C bus recovery, sensor timeout protection, and graduated error handling with diagnostic logging
+- **Online/Offline Status** - MQTT Last Will and Testament (LWT) for real-time availability monitoring
+- **System Monitoring** - Publishes Pi CPU temperature, throttle state, and undervoltage detection
 - **LCD Display** - Shows live data and historical graphs on the Weather HAT screen
 - **Power Efficient** - Display sleeps when not in use
 - **Container Support** - Run via Podman for easy deployment
 - **Systemd Services** - Auto-start on boot with proper logging
-- **CI/CD** - Automated linting and container builds via Forgejo
+- **Diagnostics** - Built-in MQTT connectivity tests and system optimization audits
 
 ## Quick Start
 
@@ -22,7 +25,7 @@ A Python weather station for Raspberry Pi using the Pimoroni Weather HAT. Reads 
 ### Install
 
 ```bash
-git clone https://github.com/yourusername/weather-station.git
+git clone https://github.com/timFinn/weather-station.git
 cd weather-station
 sudo ./scripts/install-service.sh
 ```
@@ -86,7 +89,7 @@ Edit `config/mqtt.env`:
 MQTT_SERVER=mqtt.example.com
 MQTT_PORT=1883
 MQTT_USERNAME=weatherhat
-MQTT_PASSWORD=secret
+MQTT_PASSWORD=<your-password>
 TEMP_OFFSET=-7.5
 ```
 
@@ -94,15 +97,27 @@ See [MQTT.md](docs/MQTT.md) for all options.
 
 ## MQTT Topics
 
+### Weather Sensors
 ```
-sensors/weather/temperature      - Air temperature (°C)
-sensors/weather/humidity         - Humidity (%)
-sensors/weather/pressure         - Pressure (hPa)
-sensors/weather/light            - Light (lux)
+sensors/weather/temperature      - Compensated air temperature (°C)
+sensors/weather/humidity         - Raw humidity (%)
+sensors/weather/relative_humidity - Relative humidity (%)
+sensors/weather/pressure         - Atmospheric pressure (hPa)
+sensors/weather/dewpoint         - Dew point (°C)
+sensors/weather/light            - Light level (lux)
 sensors/weather/wind_speed       - Wind speed (m/s)
 sensors/weather/wind_direction   - Wind direction (cardinal)
 sensors/weather/rain             - Rain rate (mm/s)
+sensors/weather/rain_total       - Total rain in interval (mm)
+sensors/weather/status           - Online/offline (retained, via LWT)
+```
+
+### System Monitoring
+```
 sensors/pi/cpu_temp              - CPU temperature (°C)
+sensors/pi/throttled             - Throttle status (raw hex)
+sensors/pi/undervoltage          - Undervoltage since boot (bool)
+sensors/pi/undervoltage_now      - Undervoltage right now (bool)
 ```
 
 ## Container Deployment
@@ -113,7 +128,7 @@ podman run --privileged \
   --device /dev/spidev0.0 \
   --device /dev/gpiochip0 \
   --env-file config/mqtt.env \
-  registry.timfinn.dev/weatherhat:latest
+  weatherhat:latest
 ```
 
 See [CONTAINER.md](docs/CONTAINER.md) for service setup and CI/CD details.

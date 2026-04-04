@@ -71,7 +71,7 @@ All settings are configured via environment variables in `config/mqtt.env`:
 MQTT_SERVER=mqtt.example.com
 MQTT_PORT=1883
 MQTT_USERNAME=weatherhat
-MQTT_PASSWORD=secret123
+MQTT_PASSWORD=<your-password>
 MQTT_CLIENT_ID=weatherhat-garden
 MQTT_TOPIC_PREFIX=sensors
 

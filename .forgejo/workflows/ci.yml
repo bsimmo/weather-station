@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: registry.timfinn.dev
+  # Set REGISTRY secret in your Forgejo/Gitea instance settings
+  REGISTRY: ${{ secrets.REGISTRY }}
   IMAGE_NAME: weatherhat
 
 jobs:

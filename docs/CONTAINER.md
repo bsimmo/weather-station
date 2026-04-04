@@ -14,8 +14,8 @@ The container requires access to the Pi's hardware devices (I2C, SPI, GPIO).
 ## Quick Start
 
 ```bash
-# Pull the image
-podman pull registry.timfinn.dev/weatherhat:latest
+# Build the image
+podman build -t weatherhat:latest -f Containerfile .
 
 # Run with hardware access
 podman run --privileged \
@@ -23,7 +23,7 @@ podman run --privileged \
   --device /dev/spidev0.0 \
   --device /dev/gpiochip0 \
   --env-file config/mqtt.env \
-  registry.timfinn.dev/weatherhat:latest
+  weatherhat:latest
 ```
 
 ## Building Locally
@@ -52,7 +52,7 @@ podman run --privileged \
   --device /dev/spidev0.0 \
   --device /dev/gpiochip0 \
   --env-file config/mqtt.env \
-  registry.timfinn.dev/weatherhat:latest
+  weatherhat:latest
 
 # Using individual variables
 podman run --privileged \
@@ -62,9 +62,9 @@ podman run --privileged \
   -e MQTT_SERVER=mqtt.example.com \
   -e MQTT_PORT=1883 \
   -e MQTT_USERNAME=weatherhat \
-  -e MQTT_PASSWORD=secret \
+  -e MQTT_PASSWORD=<your-password> \
   -e TEMP_OFFSET=-7.5 \
-  registry.timfinn.dev/weatherhat:latest
+  weatherhat:latest
 ```
 
 ## Running as a Service
@@ -79,7 +79,7 @@ Description=Weather HAT MQTT Publisher
 After=network-online.target
 
 [Container]
-Image=registry.timfinn.dev/weatherhat:latest
+Image=weatherhat:latest
 AddDevice=/dev/i2c-1
 AddDevice=/dev/spidev0.0
 AddDevice=/dev/gpiochip0
@@ -110,7 +110,7 @@ podman create --name weatherhat \
   --device /dev/spidev0.0 \
   --device /dev/gpiochip0 \
   --env-file /home/weather/weather-station/config/mqtt.env \
-  registry.timfinn.dev/weatherhat:latest
+  weatherhat:latest
 
 # Generate systemd unit
 podman generate systemd --name weatherhat --files --new
@@ -161,7 +161,7 @@ Images are built and pushed automatically via Forgejo CI:
 1. On push to `main`, the workflow runs
 2. Linting checks (ruff, isort, codespell)
 3. Multi-arch container build
-4. Push to `registry.timfinn.dev/weatherhat:latest`
+4. Push to your configured container registry
 
 See `.forgejo/workflows/ci.yml` for details.
 
@@ -181,8 +181,8 @@ journalctl -u container-weatherhat -f
 ## Updating
 
 ```bash
-# Pull latest image
-podman pull registry.timfinn.dev/weatherhat:latest
+# Rebuild the image
+podman build -t weatherhat:latest -f Containerfile .
 
 # Restart container
 podman stop weatherhat

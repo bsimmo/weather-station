@@ -11,7 +11,6 @@ Usage:
 """
 import argparse
 import json
-import re
 import sys
 import threading
 from collections import defaultdict
@@ -80,25 +79,33 @@ class DiscoveryValidator:
 
     def check_completeness(self):
         """Check that all expected sensors were discovered."""
-        found_keys = set()
-        for topic in self.configs:
-            # Extract sensor key from homeassistant/sensor/{client_id}_{key}/config
-            match = re.search(r'/sensor/[^/]+_([^/]+)/config$', topic)
-            if match:
-                found_keys.add(match.group(1))
-
+        # Use unique_id from payloads instead of parsing topics, since both
+        # client_id and sensor keys can contain underscores (e.g., weatherhat-pi_rain_total).
+        # Match against known sensor keys by checking unique_id suffix.
         all_expected = EXPECTED_WEATHER_SENSORS | EXPECTED_PI_SENSORS
+        found_keys = set()
+        for payload in self.configs.values():
+            uid = payload.get("unique_id", "")
+            for key in all_expected:
+                if uid.endswith(f"_{key}"):
+                    found_keys.add(key)
+
         missing = all_expected - found_keys
         if missing:
             self.errors.append(f"Missing discovery configs for: {missing}")
 
-        # Check both devices appeared
-        has_weather = any(not ident.endswith("-pi") for ident in self.device_ids)
-        has_pi = any(ident.endswith("-pi") for ident in self.device_ids)
-        if not has_weather:
+        # Check both devices appeared using device name, not identifier suffix,
+        # since the client_id itself may end with "-pi" (e.g., weatherhat-pi).
+        device_names = set()
+        for payload in self.configs.values():
+            device = payload.get("device", {})
+            name = device.get("name", "")
+            if name:
+                device_names.add(name)
+        if "Weather Station" not in device_names:
             self.errors.append("No Weather Station device found")
-        if not has_pi:
-            self.errors.append("No Pi System device found")
+        if "Weather Station Pi" not in device_names:
+            self.errors.append("No Weather Station Pi device found")
 
     def report(self):
         """Print results and return exit code."""

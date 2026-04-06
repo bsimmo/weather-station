@@ -58,6 +58,7 @@ TOPICS = {
     'dewpoint': f"{MQTT_TOPIC_PREFIX}/weather/dewpoint",
     'light': f"{MQTT_TOPIC_PREFIX}/weather/light",
     'wind_direction': f"{MQTT_TOPIC_PREFIX}/weather/wind_direction",
+    'wind_gust': f"{MQTT_TOPIC_PREFIX}/weather/wind_gust",
     'wind_speed': f"{MQTT_TOPIC_PREFIX}/weather/wind_speed",
     'rain': f"{MQTT_TOPIC_PREFIX}/weather/rain",
     'rain_total': f"{MQTT_TOPIC_PREFIX}/weather/rain_total",

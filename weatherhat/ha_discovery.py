@@ -62,11 +62,23 @@ WEATHER_SENSORS = {
         "device_class": "wind_speed",
         "unit_of_measurement": "m/s",
         "state_class": "measurement",
+        "icon": "mdi:weather-windy",
         "subtopic": "weather/wind_speed",
     },
+    "wind_gust": {
+        "name": "Wind Gust",
+        "device_class": "wind_speed",
+        "unit_of_measurement": "m/s",
+        "icon": "mdi:weather-windy",
+        "subtopic": "weather/wind_gust"
+    }
+    
     "wind_direction": {
         "name": "Wind Direction",
-        "icon": "mdi:windsock",
+        "device_class": "wind_direction",
+        "unit_of_measurement": "°",
+        "state_class": "measurement",
+        "icon": "mdi:compass-outline",
         "subtopic": "weather/wind_direction",
     },
     "rain": {
